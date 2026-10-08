@@ -1,7 +1,7 @@
 !(bind! &r (new-space)) 
 !(bind! &testedActions (new-space))
 (= (rand-random) (py-call (random.random)))
-(= (sleep-t) (py-call (time.sleep)))
+(= (sleep-t $seconds) (py-call (time.sleep $seconds)))
 
 (= (energyThreshold) 0.25) ;; energy threshold for performing actions
 (= (successRate) 0.8) ;; probability of opponent returning the ball
@@ -42,7 +42,7 @@
 (= (executeWait) 
     (let* (
         ($prob (rand-random))
-        ($t (sleep 0.5))
+        ($t (sleep-t 0.5))
         ($_ (println! "   [Action] Waiting for opponent ..."))
         ($_ (println! ([Play] probability value: $prob)))
     )
