@@ -75,6 +75,19 @@
     )
 
 )
+
+; The feedback loop stores bounded, five-field demands. Keep the bounds when
+; updating the current value; setDemandValue above serves the older form.
+(= (setBoundedDemandValue $space $demandName $newValue)
+    (let* (
+        ($oldDemand (fetchDemand $space $demandName))
+        ((demand $demandName $min $max $oldValue) $oldDemand)
+        ($_ (remove-atom $space $oldDemand))
+        ($_ (add-atom $space (demand $demandName $min $max $newValue)))
+    )
+        ()
+    )
+)
 (= (getDemandByName $space $name) (match $space (demand $name $min $max $x) (demand $name $min $max $x)))
 
 

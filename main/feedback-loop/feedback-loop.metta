@@ -1,3 +1,4 @@
+!(import! &self ../../psi-utilities/normalization)
 !(import! &self ../../main/demands/demands)
 !(import! &self ../../main/mind-agents/action-planner/action-planner-v1)
 !(import! &self ../../main/mind-agents/feeling-updaters/feeling-updaters)
@@ -8,9 +9,7 @@
         ()
         (let* (
             (($head $tail) (decons-atom $expression))
-            ; ($_  (remove-atom $space $head))
-           ($rem (collapse (get-atoms $space)))
-           ; ($_ (println! (remaining-atoms $rem)))
+            ($_ (remove-atom $space $head))
         )
             (remove-atoms' $space $tail)
         )
@@ -139,22 +138,16 @@
 ;(= (matchGoal $ruleSpace $actions)
  ;  	(goal1 context1)
 ;)
-;;(: applyActions (-> Expression Goal Expression Expression))
-(= (applyActions $actions $goal $demand) 
-   (if (== $actions ())
-     		()
-		(let $isGoalMet? (isGoalMet? $actions $goal)
-		  	(if $isGoalMet?
-                (let* (
-                       ($_ (println! (goalMet $isGoalMet?)))
-                       ((demand $demandName $demandValue) $demand)
-					   ($newDemValue (+ $demandValue (* (- 1 $demandValue) 0.5)))
-                )
-			  	    (setDemandValue &demandspace $demandName $newDemValue)
-                )
-				()
-			)
-		)))
+(= (applyActions $actions $state $goal $demand)
+    (let $goalMet (isGoalMet? $actions $state $goal &ruleSpace)
+        (if $goalMet
+            (let* (
+                ($_ (println! (goalMet $goalMet)))
+                ((demand $demandName $min $max $demandValue) $demand)
+                ($newDemValue (+ $demandValue (* (- 1 $demandValue) 0.5)))
+            )
+                (setBoundedDemandValue &demandspace $demandName $newDemValue))
+            ())))
 ; A non-deterministic implementation of demand selection refer 
 ;; OpenPsi: A Novel Computational Affective Model and its Application in Video Games by Goertzel,Ben et. al (2013)
 (: selectDemand (-> Expression Expression))
@@ -199,53 +192,30 @@
 	)))
 
 
-(: isGoalMet? (-> Expression Goal Bool))
-(= (isGoalMet? $actions $goal)
-	(let* (
-	       ($length (size-atom $actions))
-	       ($lastAction (index-atom $actions (- $length 1)))
-	       ($rules' (findRulesWithAction &kb $lastAction))
-           ;($_ (println! (rulesinGoal $rules')))
-	)
-		 (isGoalMet' $rules' $goal)
-	)	
-)
+; A plan reaches a goal only when each action is applicable from the state
+; produced by its predecessor. Use the native v1 rule matcher for transitions.
+(= (isGoalMet? $actions $state (Goal $goal $value $target) $ruleSpace)
+    (OpenPsi.ReplayActions $actions $state $goal $ruleSpace))
 
+(= (OpenPsi.ReplayActions $actions $state $goal $ruleSpace)
+    (if (== $actions ())
+        (== $state $goal)
+        (let* (($action (car-atom $actions))
+               ($rest (cdr-atom $actions))
+               ($rules (findRulesWithContext $ruleSpace $state)))
+              (OpenPsi.ReplayRules $rules $action $rest $goal $ruleSpace))))
 
-
-(:isGoalMet' (-> Expression Goal Bool))
-(= (isGoalMet' $rules $goal)
-   	(if (== $rules ())
-		False
-		(let* (
-			(($rule $tail) (decons-atom $rules))
-            ;($_ (println! (isGoalMetInnerRule $rule tail $tail)))
-			($ruleGoal (extractGoalFromRule $rule))
-            ;($_ (println! (this is the goal $ruleGoal)))
-		)
-		  (if (== $ruleGoal $goal)
-		    	True
-		    	(isGoalMet' $tail $goal)
-		  )
-		)
-	)
-)
-
-
-;; How would this function work? how can I check whether the goal is met?
-;; This function is used for a follow-up after the action-selection mind agent
-;; is applied.
-(: isGoalMet? (-> Expression Goal Bool))
-(= (isGoalMet? $actions $goal)
-	(let* (
-	       ($length (size-atom $actions))
-	       ($lastAction (index-atom $actions (- $length 1)))
-	       ($rules' (findRulesWithAction &ruleSpace $lastAction))
-           ($_ (println! (rulesinGoal $rules')))
-	)
-		 (isGoalMet' $rules' $goal)
-	)	
-)
+(= (OpenPsi.ReplayRules $rules $action $rest $goal $ruleSpace)
+    (if (== $rules ())
+        False
+        (let* (($rule (car-atom $rules))
+               ($tail (cdr-atom $rules))
+               ($ruleAction (selectActionFromRule $rule))
+               ($next (extractGoalName (extractGoalFromRule $rule))))
+              (if (and (== $ruleAction $action)
+                       (OpenPsi.ReplayActions $rest $next $goal $ruleSpace))
+                  True
+                  (OpenPsi.ReplayRules $tail $action $rest $goal $ruleSpace)))))
 
 
 ;; This function updates the modulator values in the atomspace.
@@ -300,8 +270,22 @@
     )
 )
 
-; (: psi-agent-loop (-> Symbol hyperon::space::DynSpace Expression)) 
+; Optional PRISM planner dispatch. The caller must separately import
+; action-planner-v2 and prism-openpsi before using psi-agent-loop-prism.
+; Legacy psi-agent-loop never requires PRISM or its Python bridge.
+(= (psi-select-actions $mode $state $goal)
+    (if (== $mode Prism)
+        (PRISM.OpenPsi.Plan $state $goal &ruleSpace 32)
+        (planner &ruleSpace $state $goal)))
+
+; (: psi-agent-loop (-> Symbol hyperon::space::DynSpace Expression))
 (= (psi-agent-loop $state $kb)
+    (psi-agent-loop-with-selector $state $kb Native))
+
+(= (psi-agent-loop-prism $state $kb)
+    (psi-agent-loop-with-selector $state $kb Prism))
+
+(= (psi-agent-loop-with-selector $state $kb $selector)
 	(let* 
     (
 	    ($demands (queryAll $kb demand))
@@ -313,9 +297,9 @@
 		      ($goalObj (goal-selector $relatedGoals))
 		((Goal $goal $goalVal1 $goalVal2) $goalObj) 
 		      ; ($_ (println! (goal-psi $goal)))
-		($actions (planner &ruleSpace $state $goal))
+		($actions (psi-select-actions $selector $state $goal))
 		      ; ($_ (println! (actions-psi-to-apply $actions goal $goal demand $currDemand)))
-		($applyValue (applyActions $actions $goalObj $currDemand)) 
+		($applyValue (applyActions $actions $state $goalObj $currDemand))
 		      ; ($_ (println! (applyValue $applyValue)))
 		($competenceDemand (getDemandByName &demandspace competence)) 
 		($affiliationDemand (getDemandByName &demandspace affiliation))
